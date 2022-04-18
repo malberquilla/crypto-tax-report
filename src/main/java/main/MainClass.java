@@ -61,8 +61,7 @@ public class MainClass {
         LOGGER.info("----- Binance -----");
         readBinanceBuyHistory();
 
-        readBinanceCsv(
-            TX_BINANCE_SPOT_FOLDER + "\\part-00000-25ecd0d7-8746-41f9-8f62-7edd54892527-c000.csv");
+        readBinanceSpot();
     }
 
     private static void readBinanceBuyHistory() {
@@ -117,14 +116,15 @@ public class MainClass {
         }
     }
 
-    private static void readBinanceCsv(String file) {
+    private static void readBinanceSpot() {
         try {
-            LOGGER.info("Reading file: {}", file);
-            var txByTxType = new CsvToBeanBuilder<BinanceTx>(
-                new FileReader(file))
-                .withType(BinanceTx.class)
-                .build()
-                .parse()
+            var txs = listFilesByExt(TX_BINANCE_SPOT_FOLDER, ".csv")
+                .stream()
+                .map(MainClass::readBinanceCsv)
+                .flatMap(List::stream)
+                .toList();
+
+            var txByTxType = txs
                 .stream()
                 .sorted()
                 .collect(groupingBy(BinanceTx::getPair));
@@ -136,6 +136,19 @@ public class MainClass {
 
         } catch (IOException e) {
             LOGGER.error(e.getMessage());
+        }
+    }
+
+    private static <R> List<BinanceTx> readBinanceCsv(String file) {
+        LOGGER.info("Reading file: {}", file);
+        try {
+            return new CsvToBeanBuilder<BinanceTx>(
+                new FileReader(file))
+                .withType(BinanceTx.class)
+                .build()
+                .parse();
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException(e);
         }
     }
 
