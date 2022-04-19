@@ -30,6 +30,7 @@ import java.util.function.ToDoubleFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
@@ -54,6 +55,8 @@ public class MainClass {
 
     private static final String BASE_URL = "https://api.exchangerate.host/convert?from=%s&to=%s&date=%s&amount=%s";
 
+    private static final List<BinanceTx> binanceTxList = new ArrayList<>();
+
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
         readCoinbaseCsv();
@@ -62,14 +65,31 @@ public class MainClass {
         readBinanceBuyHistory();
 
         readBinanceSpot();
+
+        printBinanceTxs();
+    }
+
+    private static void printBinanceTxs() {
+        var txByTxType = binanceTxList
+            .stream()
+            .sorted()
+            .collect(groupingBy(BinanceTx::getPair));
+
+        txByTxType.forEach((txType, txList) -> {
+            LOGGER.info("Transaction type: {}", txType);
+            txList.forEach(tx -> LOGGER.info(tx.toString()));
+        });
     }
 
     private static void readBinanceBuyHistory() {
         try {
-            listFilesByExt(TX_BINANCE_BUY_FOLDER, ".xlsx")
+            var txs = listFilesByExt(TX_BINANCE_BUY_FOLDER, ".xlsx")
                 .stream()
                 .map(MainClass::readBinanceBuyHistoryFile)
-                .forEach(f -> LOGGER.info("Reading file {}", f));
+                .flatMap(List::stream)
+                .toList();
+
+            binanceTxList.addAll(txs);
         } catch (IOException e) {
             LOGGER.error("Error reading files", e);
         }
@@ -80,7 +100,6 @@ public class MainClass {
         try (var workbook = new XSSFWorkbook(new FileInputStream(file))) {
             var sheet = workbook.getSheetAt(0);
 
-            BinanceTx tx;
             String zoneId = "UTC";
             for (Row row : sheet) {
                 if (row.getRowNum() == 0) {
@@ -91,20 +110,54 @@ public class MainClass {
                         zoneId = m.group(1);
                     }
                 } else {
-                    tx = new BinanceTx();
-
-                    // Date
                     var cell = row.getCell(0);
-                    var date = LocalDateTime.parse(cell.getStringCellValue(), formatter);
-                    tx.setDate(date.atZone(ZoneId.of(zoneId)));
-
-                    result.add(tx);
+                    BinanceTx tx = buildBinanceTx(zoneId, row, cell);
+                    if (tx != null) {
+                        result.add(tx);
+                    }
                 }
             }
         } catch (IOException e) {
             LOGGER.error("Error reading file", e);
         }
         return result;
+    }
+
+    private static BinanceTx buildBinanceTx(String zoneId, Row row, Cell cell) {
+        BinanceTx tx = null;
+        // Date
+        var date = LocalDateTime.parse(cell.getStringCellValue(), formatter);
+        // Method
+        var method = row.getCell(1).getStringCellValue();
+        // Amount
+        var amount = row.getCell(2).getStringCellValue();
+        // Price
+        var price = row.getCell(3).getStringCellValue();
+        // Fees
+        var fees = row.getCell(4).getStringCellValue();
+        // Final Amount
+        var finalAmount = row.getCell(5).getStringCellValue();
+        // Status
+        var status = row.getCell(6).getStringCellValue();
+        // Transaction ID
+        var txId = row.getCell(7).getStringCellValue();
+
+        if ("Completed".equalsIgnoreCase(status)) {
+            tx = new BinanceTx();
+            tx.setDate(date.atZone(ZoneId.of(zoneId)));
+            var priceTokens = price.split(" ");
+            tx.setPrice(new BigDecimal(priceTokens[0]));
+            var pair = priceTokens[1].split("/");
+            tx.setPair(pair[1] + pair[0]);
+            tx.setTransactionType(EnumTransactionType.BUY);
+            tx.setExecuted(finalAmount.replace(" ", ""));
+            tx.setAmount(amount.replace(" ", ""));
+            tx.setFee(fees.replace(" ", ""));
+            tx.setTransactionId(txId);
+            tx.setMethod(method);
+        }
+
+        return tx;
     }
 
     private static Set<String> listFilesByExt(String folder, String ext) throws IOException {
@@ -124,16 +177,7 @@ public class MainClass {
                 .flatMap(List::stream)
                 .toList();
 
-            var txByTxType = txs
-                .stream()
-                .sorted()
-                .collect(groupingBy(BinanceTx::getPair));
-
-            txByTxType.forEach((txType, txList) -> {
-                LOGGER.info("Transaction type: {}", txType);
-                txList.forEach(tx -> LOGGER.info(tx.toString()));
-            });
-
+            binanceTxList.addAll(txs);
         } catch (IOException e) {
             LOGGER.error(e.getMessage());
         }

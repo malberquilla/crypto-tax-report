@@ -2,6 +2,7 @@ package main;
 
 import com.opencsv.bean.CsvBindByName;
 import com.opencsv.bean.CsvCustomBindByName;
+import com.opencsv.bean.CsvIgnore;
 import com.opencsv.bean.CsvNumber;
 import java.math.BigDecimal;
 import java.time.ZonedDateTime;
@@ -25,32 +26,13 @@ public class BinanceTx implements Comparable<BinanceTx> {
     private String amount;
     @CsvBindByName(column = "Fee")
     private String fee;
+    @CsvIgnore
+    private String transactionId;
+    @CsvIgnore
+    private String method;
 
     public BinanceTx() {
-    }
-
-    public BinanceTx(ZonedDateTime date, String pair, EnumTransactionType transactionType,
-        BigDecimal price, String executed, String amount, String fee) {
-        this.date = date;
-        this.pair = pair;
-        this.transactionType = transactionType;
-        this.price = price;
-        this.executed = executed;
-        this.amount = amount;
-        this.fee = fee;
-    }
-
-    @Override
-    public String toString() {
-        return "BinanceTx{" +
-            "date=" + date +
-            ", pair='" + pair + '\'' +
-            ", transactionType=" + transactionType +
-            ", price=" + price +
-            ", executed='" + executed + '\'' +
-            ", amount='" + amount + '\'' +
-            ", fee='" + fee + '\'' +
-            '}';
+        // Mandatory for OpenCSV
     }
 
     public ZonedDateTime getDate() {
@@ -109,6 +91,23 @@ public class BinanceTx implements Comparable<BinanceTx> {
         this.fee = fee;
     }
 
+
+    public String getMethod() {
+        return method;
+    }
+
+    public void setMethod(String method) {
+        this.method = method;
+    }
+
+    public String getTransactionId() {
+        return transactionId;
+    }
+
+    public void setTransactionId(String transactionId) {
+        this.transactionId = transactionId;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -122,16 +121,34 @@ public class BinanceTx implements Comparable<BinanceTx> {
             binanceTx.pair) && transactionType == binanceTx.transactionType && Objects.equals(
             price, binanceTx.price) && Objects.equals(executed, binanceTx.executed)
             && Objects.equals(amount, binanceTx.amount) && Objects.equals(fee,
-            binanceTx.fee);
+            binanceTx.fee) && Objects.equals(transactionId, binanceTx.transactionId)
+            && Objects.equals(method, binanceTx.method);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(date, pair, transactionType, price, executed, amount, fee);
+        return Objects.hash(date, pair, transactionType, price, executed, amount, fee,
+            transactionId,
+            method);
     }
 
     @Override
     public int compareTo(BinanceTx o) {
         return getDate().compareTo(o.getDate());
+    }
+
+    @Override
+    public String toString() {
+        return "BinanceTx{" +
+            "date=" + date +
+            ", pair='" + pair + '\'' +
+            ", transactionType=" + transactionType +
+            ", price=" + price +
+            ", executed='" + executed + '\'' +
+            ", amount='" + amount + '\'' +
+            ", fee='" + fee + '\'' +
+            ", transactionId='" + transactionId + '\'' +
+            ", method='" + method + '\'' +
+            '}';
     }
 }
