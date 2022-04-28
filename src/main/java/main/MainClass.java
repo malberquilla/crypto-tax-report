@@ -24,6 +24,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.ToDoubleFunction;
@@ -55,6 +56,8 @@ public class MainClass {
 
     private static final String BASE_URL = "https://api.exchangerate.host/convert?from=%s&to=%s&date=%s&amount=%s";
 
+    private static final Pattern PAIR_PATTERN = Pattern.compile("(\\d+\\.\\d+)([A-Z]*)");
+
     private static final List<BinanceTx> binanceTxList = new ArrayList<>();
 
     public static void main(String[] args) {
@@ -67,6 +70,76 @@ public class MainClass {
         readBinanceSpot();
 
         printBinanceTxs();
+
+        calcGains("CTSIUSDT");
+    }
+
+    private static void calcGains(String pair) {
+        // Filter SOL transactions from binance list
+        var txs = binanceTxList.stream()
+            .filter(tx -> tx.getPair().equals(pair))
+            .sorted()
+            .collect(groupingBy(BinanceTx::getTransactionType,
+                Collectors.toCollection(LinkedList::new)));
+
+        var buys = txs.get(EnumTransactionType.BUY);
+        var sells = txs.get(EnumTransactionType.SELL);
+
+        BigDecimal totalProfit = gains(sells, buys);
+
+        LOGGER.info("Total gains: {}", totalProfit);
+    }
+
+    private static BigDecimal gains(LinkedList<BinanceTx> sells, LinkedList<BinanceTx> buys) {
+        var profit = BigDecimal.ZERO;
+
+        if (buys.isEmpty() && !sells.isEmpty()) {
+            LOGGER.error("Quedan ventas realizadas pero no se han realizado compras");
+        } else if (!buys.isEmpty() && sells.isEmpty()) {
+            LOGGER.info("Se han terminado de procesar las ventas");
+            // TODO: calcular cantidad de moneda restante
+        } else if (buys.isEmpty() && sells.isEmpty()) {
+            LOGGER.info("Tanto compras como ventas han terminado");
+        } else {
+            var buy = buys.element();
+            var sell = sells.element();
+
+            var matcher = PAIR_PATTERN.matcher(buy.getExecuted());
+            var amountPurchased = new BigDecimal(matcher.find() ? matcher.group(1) : "0");
+            LOGGER.debug("Buy: {} {}", amountPurchased, matcher.group(2));
+
+            matcher = PAIR_PATTERN.matcher(sell.getExecuted());
+            var amountSold = new BigDecimal(matcher.find() ? matcher.group(1) : "0");
+            var coinSold = matcher.group(2);
+            LOGGER.debug("Sell: {} {}", amountSold, coinSold);
+
+            // TODO: Check if the sale fits in the purchase. If not, only calculate the gain on the part that fits.
+            profit = profit.add(calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
+            if (amountSold.compareTo(amountPurchased) == 0) {
+                sells.pop();
+                buys.pop();
+            }
+            if (amountSold.compareTo(amountPurchased) < 0) {
+                amountPurchased = amountPurchased.subtract(amountSold);
+                buy.setExecuted(amountPurchased + coinSold);
+                sells.pop();
+            } else {
+                amountSold = amountSold.subtract(amountPurchased);
+                sell.setExecuted(amountSold + coinSold);
+                buys.pop();
+            }
+
+            profit = profit.add(gains(sells, buys));
+        }
+
+        return profit;
+    }
+
+    private static BigDecimal calculateSellGains(BigDecimal amountSold,
+        BigDecimal buyPrice, BigDecimal sellPrice) {
+        var purchaseCost = amountSold.multiply(buyPrice);
+        var salesGain = amountSold.multiply(sellPrice);
+        return salesGain.subtract(purchaseCost);
     }
 
     private static void printBinanceTxs() {
