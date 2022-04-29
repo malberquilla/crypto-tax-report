@@ -26,6 +26,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.ToDoubleFunction;
 import java.util.regex.Matcher;
@@ -62,37 +63,43 @@ public class MainClass {
 
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
-        readCoinbaseCsv();
+        //readCoinbaseCsv();
 
         LOGGER.info("----- Binance -----");
         readBinanceBuyHistory();
 
         readBinanceSpot();
 
-        printBinanceTxs();
+        //printBinanceTxs();
 
-        calcGains("CTSIUSDT");
+        calcGains();
     }
 
-    private static void calcGains(String pair) {
+    private static void calcGains() {
         // Filter SOL transactions from binance list
-        var txs = binanceTxList.stream()
-            .filter(tx -> tx.getPair().equals(pair))
+        binanceTxList.stream()
             .sorted()
-            .collect(groupingBy(BinanceTx::getTransactionType,
-                Collectors.toCollection(LinkedList::new)));
+            .collect(groupingBy(BinanceTx::getPair, groupingBy(BinanceTx::getTransactionType,
+                Collectors.toCollection(LinkedList::new))))
+            .forEach(MainClass::calcGains);
+    }
 
+    private static void calcGains(String pair,
+        Map<EnumTransactionType, LinkedList<BinanceTx>> txs) {
         var buys = txs.get(EnumTransactionType.BUY);
         var sells = txs.get(EnumTransactionType.SELL);
 
         BigDecimal totalProfit = gains(sells, buys);
 
-        LOGGER.info("Total gains: {}", totalProfit);
+        LOGGER.info("{} Total gains: {}", pair, totalProfit);
     }
 
     private static BigDecimal gains(LinkedList<BinanceTx> sells, LinkedList<BinanceTx> buys) {
         var profit = BigDecimal.ZERO;
 
+        if (sells == null || buys == null) {
+            return BigDecimal.ZERO;
+        }
         if (buys.isEmpty() && !sells.isEmpty()) {
             LOGGER.error("Quedan ventas realizadas pero no se han realizado compras");
         } else if (!buys.isEmpty() && sells.isEmpty()) {
@@ -114,16 +121,22 @@ public class MainClass {
             LOGGER.debug("Sell: {} {}", amountSold, coinSold);
 
             // TODO: Check if the sale fits in the purchase. If not, only calculate the gain on the part that fits.
-            profit = profit.add(calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
+
             if (amountSold.compareTo(amountPurchased) == 0) {
+                profit = profit.add(
+                    calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
                 sells.pop();
                 buys.pop();
             }
             if (amountSold.compareTo(amountPurchased) < 0) {
+                profit = profit.add(
+                    calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
                 amountPurchased = amountPurchased.subtract(amountSold);
                 buy.setExecuted(amountPurchased + coinSold);
                 sells.pop();
             } else {
+                profit = profit.add(
+                    calculateSellGains(amountPurchased, buy.getPrice(), sell.getPrice()));
                 amountSold = amountSold.subtract(amountPurchased);
                 sell.setExecuted(amountSold + coinSold);
                 buys.pop();
