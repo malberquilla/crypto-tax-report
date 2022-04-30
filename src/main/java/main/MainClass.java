@@ -92,7 +92,6 @@ public class MainClass {
         var totalGains = gains.values().stream().mapToDouble(BigDecimal::doubleValue).sum();
 
         LOGGER.info("Total gains: {}", totalGains);
-
     }
 
     private static BigDecimal calcGains(String pair,
@@ -118,7 +117,7 @@ public class MainClass {
         } else if (!buys.isEmpty() && sells.isEmpty()) {
             LOGGER.info("Se han terminado de procesar las ventas");
             // TODO: calcular cantidad de moneda restante
-        } else if (buys.isEmpty() && sells.isEmpty()) {
+        } else if (buys.isEmpty()) {
             LOGGER.info("Tanto compras como ventas han terminado");
         } else {
             var buy = buys.element();
@@ -132,8 +131,6 @@ public class MainClass {
             var amountSold = new BigDecimal(matcher.find() ? matcher.group(1) : "0");
             var coinSold = matcher.group(2);
             LOGGER.debug("Sell: {} {}", amountSold, coinSold);
-
-            // TODO: Check if the sale fits in the purchase. If not, only calculate the gain on the part that fits.
 
             if (amountSold.compareTo(amountPurchased) == 0) {
                 profit = profit.add(
@@ -155,7 +152,10 @@ public class MainClass {
                 buys.pop();
             }
 
-            profit = profit.add(gains(sells, buys));
+            if (profit.compareTo(BigDecimal.ZERO) > 0) {
+                profit = convert("USD", "EUR", sell.getDate(), profit);
+                profit = profit.add(gains(sells, buys));
+            }
         }
 
         return profit;
@@ -282,7 +282,7 @@ public class MainClass {
         }
     }
 
-    private static <R> List<BinanceTx> readBinanceCsv(String file) {
+    private static List<BinanceTx> readBinanceCsv(String file) {
         LOGGER.info("Reading file: {}", file);
         try {
             return new CsvToBeanBuilder<BinanceTx>(
@@ -350,22 +350,23 @@ public class MainClass {
     }
 
     private static ToDoubleFunction<CoinbaseTx> convertTx() {
-        return tx -> convert("USD", "EUR", tx.getTimestamp(), tx.getTotal());
+        return tx -> convert("USD", "EUR", tx.getTimestamp(), tx.getTotal()).doubleValue();
     }
 
-    private static double convert(String from, String to, ZonedDateTime date, BigDecimal amount) {
+    private static BigDecimal convert(String from, String to, ZonedDateTime date,
+        BigDecimal amount) {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(String.format(BASE_URL, from, to, date, amount)))
             .GET()
             .build();
 
-        double result = 0;
+        BigDecimal result = BigDecimal.ZERO;
         try {
             HttpResponse<String> response = httpClient.send(request,
                 HttpResponse.BodyHandlers.ofString());
 
             JsonObject body = new Gson().fromJson(response.body(), JsonObject.class);
-            result = body.get("result").getAsDouble();
+            result = body.get("result").getAsBigDecimal();
         } catch (IOException | InterruptedException e) {
             LOGGER.error("Error converting currency", e);
         }
