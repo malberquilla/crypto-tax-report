@@ -24,6 +24,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,8 @@ public class MainClass {
 
     private static final List<BinanceTx> binanceTxList = new ArrayList<>();
 
+    private static final Map<String, BigDecimal> gains = new HashMap<>();
+
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
         //readCoinbaseCsv();
@@ -81,17 +84,27 @@ public class MainClass {
             .sorted()
             .collect(groupingBy(BinanceTx::getPair, groupingBy(BinanceTx::getTransactionType,
                 Collectors.toCollection(LinkedList::new))))
-            .forEach(MainClass::calcGains);
+            .forEach((pair, txList) -> {
+                var gain = calcGains(pair, txList);
+                gains.put(pair, gain);
+            });
+
+        var totalGains = gains.values().stream().mapToDouble(BigDecimal::doubleValue).sum();
+
+        LOGGER.info("Total gains: {}", totalGains);
+
     }
 
-    private static void calcGains(String pair,
+    private static BigDecimal calcGains(String pair,
         Map<EnumTransactionType, LinkedList<BinanceTx>> txs) {
         var buys = txs.get(EnumTransactionType.BUY);
         var sells = txs.get(EnumTransactionType.SELL);
 
         BigDecimal totalProfit = gains(sells, buys);
 
-        LOGGER.info("{} Total gains: {}", pair, totalProfit);
+        LOGGER.info("{} gains: {}", pair, totalProfit);
+
+        return totalProfit;
     }
 
     private static BigDecimal gains(LinkedList<BinanceTx> sells, LinkedList<BinanceTx> buys) {
