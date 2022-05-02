@@ -20,12 +20,12 @@ public class BinanceTx implements Comparable<BinanceTx> {
     @CsvBindByName(column = "Price", locale = "en_US")
     @CsvNumber("###,###,###.00000000")
     private BigDecimal price;
-    @CsvBindByName(column = "Executed")
-    private String executed;
-    @CsvBindByName(column = "Amount")
-    private String amount;
-    @CsvBindByName(column = "Fee")
-    private String fee;
+    @CsvCustomBindByName(column = "Executed", converter = CurrencyConverter.class)
+    private Currency executed;
+    @CsvCustomBindByName(column = "Amount", converter = CurrencyConverter.class)
+    private Currency amount;
+    @CsvCustomBindByName(column = "Fee", converter = CurrencyConverter.class)
+    private Currency fee;
     @CsvIgnore
     private String transactionId;
     @CsvIgnore
@@ -67,27 +67,27 @@ public class BinanceTx implements Comparable<BinanceTx> {
         this.price = price;
     }
 
-    public String getExecuted() {
+    public Currency getExecuted() {
         return executed;
     }
 
-    public void setExecuted(String executed) {
-        this.executed = executed;
+    public void setExecuted(Currency currency) {
+        this.executed = currency;
     }
 
-    public String getAmount() {
+    public Currency getAmount() {
         return amount;
     }
 
-    public void setAmount(String amount) {
+    public void setAmount(Currency amount) {
         this.amount = amount;
     }
 
-    public String getFee() {
+    public Currency getFee() {
         return fee;
     }
 
-    public void setFee(String fee) {
+    public void setFee(Currency fee) {
         this.fee = fee;
     }
 

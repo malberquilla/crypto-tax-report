@@ -7,13 +7,17 @@ import com.opencsv.bean.CsvNumber;
 import java.math.BigDecimal;
 import java.time.ZonedDateTime;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 public class CoinbaseTx implements Comparable<CoinbaseTx> {
+
+    public static final Pattern COINBASE_CURRENCY_PATTERN = Pattern.compile(
+        "(\\d+\\,\\d+) ([A-Z]*)");
 
     // Timestamp,Transaction Type,Asset,Quantity Transacted,Spot Price Currency,Spot Price at Transaction,Subtotal,Total (inclusive of fees),Fees,Notes
     @CsvBindByName(column = "Timestamp")
     @CsvDate("yyyy-MM-dd'T'HH:mm:ssX")
-    private ZonedDateTime timestamp;
+    private ZonedDateTime date;
     @CsvCustomBindByName(column = "Transaction Type", converter = TransactionTypeConverter.class)
     private EnumTransactionType transactionType;
     @CsvBindByName(column = "Asset")
@@ -41,10 +45,10 @@ public class CoinbaseTx implements Comparable<CoinbaseTx> {
     public CoinbaseTx() {
     }
 
-    public CoinbaseTx(ZonedDateTime timestamp, EnumTransactionType transactionType, String asset,
+    public CoinbaseTx(ZonedDateTime date, EnumTransactionType transactionType, String asset,
         BigDecimal quantityTransacted, String spotPriceCurrency, BigDecimal spotPrice,
         BigDecimal subtotal, BigDecimal total, BigDecimal fees, String notes) {
-        this.timestamp = timestamp;
+        this.date = date;
         this.transactionType = transactionType;
         this.asset = asset;
         this.quantityTransacted = quantityTransacted;
@@ -60,12 +64,12 @@ public class CoinbaseTx implements Comparable<CoinbaseTx> {
         return this.total.doubleValue();
     }
 
-    public ZonedDateTime getTimestamp() {
-        return timestamp;
+    public ZonedDateTime getDate() {
+        return date;
     }
 
-    public void setTimestamp(ZonedDateTime timestamp) {
-        this.timestamp = timestamp;
+    public void setDate(ZonedDateTime date) {
+        this.date = date;
     }
 
     public EnumTransactionType getTransactionType() {
@@ -143,7 +147,7 @@ public class CoinbaseTx implements Comparable<CoinbaseTx> {
     @Override
     public String toString() {
         return "Tx{" +
-            "timestamp=" + timestamp +
+            "timestamp=" + date +
             ", transactionType='" + transactionType + '\'' +
             ", asset='" + asset + '\'' +
             ", quantityTransacted=" + quantityTransacted +
@@ -165,7 +169,7 @@ public class CoinbaseTx implements Comparable<CoinbaseTx> {
             return false;
         }
         CoinbaseTx coinbaseTx = (CoinbaseTx) o;
-        return Objects.equals(timestamp, coinbaseTx.timestamp) && Objects.equals(
+        return Objects.equals(date, coinbaseTx.date) && Objects.equals(
             transactionType, coinbaseTx.transactionType) && Objects.equals(asset,
             coinbaseTx.asset)
             && Objects.equals(quantityTransacted, coinbaseTx.quantityTransacted)
@@ -177,13 +181,13 @@ public class CoinbaseTx implements Comparable<CoinbaseTx> {
 
     @Override
     public int hashCode() {
-        return Objects.hash(timestamp, transactionType, asset, quantityTransacted,
+        return Objects.hash(date, transactionType, asset, quantityTransacted,
             spotPriceCurrency,
             spotPrice, subtotal, total, fees);
     }
 
     @Override
     public int compareTo(CoinbaseTx o) {
-        return getTimestamp().compareTo(o.getTimestamp());
+        return getDate().compareTo(o.getDate());
     }
 }

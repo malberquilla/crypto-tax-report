@@ -58,22 +58,26 @@ public class MainClass {
 
     private static final String BASE_URL = "https://api.exchangerate.host/convert?from=%s&to=%s&date=%s&amount=%s";
 
-    private static final Pattern PAIR_PATTERN = Pattern.compile("(\\d+\\.\\d+)([A-Z]*)");
-
     private static final List<BinanceTx> binanceTxList = new ArrayList<>();
-
     private static final Map<String, BigDecimal> gains = new HashMap<>();
+    private static List<Transaction> coinbaseTxList = new ArrayList<>();
 
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
-        //readCoinbaseCsv();
+        readCoinbaseCsv();
+
+        coinbaseTxList.stream()
+            .sorted()
+            .forEach(tx -> LOGGER.info(tx.toString()));
+
+        getCoinbaseAirdrops(2021);
 
         LOGGER.info("----- Binance -----");
         readBinanceBuyHistory();
 
         readBinanceSpot();
 
-        //printBinanceTxs();
+        printBinanceTxs();
 
         calcGains();
     }
@@ -123,14 +127,11 @@ public class MainClass {
             var buy = buys.element();
             var sell = sells.element();
 
-            var matcher = PAIR_PATTERN.matcher(buy.getExecuted());
-            var amountPurchased = new BigDecimal(matcher.find() ? matcher.group(1) : "0");
-            LOGGER.debug("Buy: {} {}", amountPurchased, matcher.group(2));
+            var amountPurchased = buy.getExecuted();
+            var amountSold = sell.getExecuted();
+            LOGGER.debug("Buy: {}", amountPurchased);
 
-            matcher = PAIR_PATTERN.matcher(sell.getExecuted());
-            var amountSold = new BigDecimal(matcher.find() ? matcher.group(1) : "0");
-            var coinSold = matcher.group(2);
-            LOGGER.debug("Sell: {} {}", amountSold, coinSold);
+            LOGGER.debug("Sell: {}", amountSold);
 
             if (amountSold.compareTo(amountPurchased) == 0) {
                 profit = profit.add(
@@ -141,14 +142,12 @@ public class MainClass {
             if (amountSold.compareTo(amountPurchased) < 0) {
                 profit = profit.add(
                     calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
-                amountPurchased = amountPurchased.subtract(amountSold);
-                buy.setExecuted(amountPurchased + coinSold);
+                buy.setExecuted(amountPurchased.subtract(amountSold));
                 sells.pop();
             } else {
                 profit = profit.add(
                     calculateSellGains(amountPurchased, buy.getPrice(), sell.getPrice()));
-                amountSold = amountSold.subtract(amountPurchased);
-                sell.setExecuted(amountSold + coinSold);
+                sell.setExecuted(amountSold.subtract(amountPurchased));
                 buys.pop();
             }
 
@@ -161,11 +160,11 @@ public class MainClass {
         return profit;
     }
 
-    private static BigDecimal calculateSellGains(BigDecimal amountSold,
+    private static BigDecimal calculateSellGains(Currency amountSold,
         BigDecimal buyPrice, BigDecimal sellPrice) {
         var purchaseCost = amountSold.multiply(buyPrice);
         var salesGain = amountSold.multiply(sellPrice);
-        return salesGain.subtract(purchaseCost);
+        return salesGain.getAmount().subtract(purchaseCost.getAmount());
     }
 
     private static void printBinanceTxs() {
@@ -175,7 +174,7 @@ public class MainClass {
             .collect(groupingBy(BinanceTx::getPair));
 
         txByTxType.forEach((txType, txList) -> {
-            LOGGER.info("Transaction type: {}", txType);
+            LOGGER.info("Pair: {}", txType);
             txList.forEach(tx -> LOGGER.info(tx.toString()));
         });
     }
@@ -247,11 +246,15 @@ public class MainClass {
             var priceTokens = price.split(" ");
             tx.setPrice(new BigDecimal(priceTokens[0]));
             var pair = priceTokens[1].split("/");
-            tx.setPair(pair[1] + pair[0]);
+            tx.setPair(pair[0] + pair[1]);
             tx.setTransactionType(EnumTransactionType.BUY);
-            tx.setExecuted(finalAmount.replace(" ", ""));
-            tx.setAmount(amount.replace(" ", ""));
-            tx.setFee(fees.replace(" ", ""));
+            var finalAmountTokens = finalAmount.split(" ");
+            tx.setExecuted(
+                new Currency(new BigDecimal(finalAmountTokens[0]), finalAmountTokens[1]));
+            var amountTokens = amount.split(" ");
+            tx.setAmount(new Currency(new BigDecimal(amountTokens[0]), amountTokens[1]));
+            var feesTokens = fees.split(" ");
+            tx.setFee(new Currency(new BigDecimal(feesTokens[0]), feesTokens[1]));
             tx.setTransactionId(txId);
             tx.setMethod(method);
         }
@@ -298,18 +301,12 @@ public class MainClass {
 
     public static void readCoinbaseCsv() {
         try {
-            var txs = listFilesByExt(TX_COINBASE_FOLDER, ".csv")
+            coinbaseTxList = listFilesByExt(TX_COINBASE_FOLDER, ".csv")
                 .stream()
                 .map(MainClass::readCoinbaseTransactions)
                 .flatMap(List::stream)
+                .map(Transaction::new)
                 .toList();
-
-            var txByTxType = txs
-                .stream()
-                .sorted()
-                .collect(groupingBy(CoinbaseTx::getTransactionType));
-
-            sumTransactionsByYear(txByTxType.get(EnumTransactionType.AIRDROP), 2021);
         } catch (IOException e) {
             LOGGER.error("Error reading files", e);
         }
@@ -330,16 +327,15 @@ public class MainClass {
         }
     }
 
-    private static void sumTransactionsByYear(List<CoinbaseTx> coinbaseTxList, int year) {
-
+    private static void getCoinbaseAirdrops(int year) {
         var airdropTxStream = coinbaseTxList.stream()
             .filter(tx -> tx.getTransactionType() == EnumTransactionType.AIRDROP
-                && tx.getTimestamp().getYear() == year);
+                && tx.getDate().getYear() == year);
 
         var airdropByAsset =
             airdropTxStream
                 .collect(
-                    groupingBy(CoinbaseTx::getAsset,
+                    groupingBy(tx -> tx.getExecuted().getCoin(),
                         Collectors.summingDouble(convertTx())));
 
         airdropByAsset.forEach((asset, total) -> LOGGER.info("Asset: {}, Total: {}", asset, total));
@@ -349,8 +345,9 @@ public class MainClass {
         LOGGER.info("Ganancias en Airdrops: {}", total);
     }
 
-    private static ToDoubleFunction<CoinbaseTx> convertTx() {
-        return tx -> convert("USD", "EUR", tx.getTimestamp(), tx.getTotal()).doubleValue();
+    private static ToDoubleFunction<Transaction> convertTx() {
+        return tx -> convert("USD", "EUR", tx.getDate(),
+            tx.getSubTotal().getAmount()).doubleValue();
     }
 
     private static BigDecimal convert(String from, String to, ZonedDateTime date,
