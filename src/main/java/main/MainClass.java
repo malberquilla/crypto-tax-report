@@ -58,17 +58,12 @@ public class MainClass {
 
     private static final String BASE_URL = "https://api.exchangerate.host/convert?from=%s&to=%s&date=%s&amount=%s";
 
-    private static final List<BinanceTx> binanceTxList = new ArrayList<>();
+    private static final List<Transaction> transactions = new ArrayList<>();
     private static final Map<String, BigDecimal> gains = new HashMap<>();
-    private static List<Transaction> coinbaseTxList = new ArrayList<>();
 
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
         readCoinbaseCsv();
-
-        coinbaseTxList.stream()
-            .sorted()
-            .forEach(tx -> LOGGER.info(tx.toString()));
 
         getCoinbaseAirdrops(2021);
 
@@ -83,11 +78,11 @@ public class MainClass {
     }
 
     private static void calcGains() {
-        // Filter SOL transactions from binance list
-        binanceTxList.stream()
+        transactions.stream()
             .sorted()
-            .collect(groupingBy(BinanceTx::getPair, groupingBy(BinanceTx::getTransactionType,
-                Collectors.toCollection(LinkedList::new))))
+            .collect(groupingBy(tx -> tx.getExecuted().getCoin(),
+                groupingBy(Transaction::getTransactionType,
+                    Collectors.toCollection(LinkedList::new))))
             .forEach((pair, txList) -> {
                 var gain = calcGains(pair, txList);
                 gains.put(pair, gain);
@@ -98,19 +93,19 @@ public class MainClass {
         LOGGER.info("Total gains: {}", totalGains);
     }
 
-    private static BigDecimal calcGains(String pair,
-        Map<EnumTransactionType, LinkedList<BinanceTx>> txs) {
+    private static BigDecimal calcGains(String coin,
+        Map<EnumTransactionType, LinkedList<Transaction>> txs) {
         var buys = txs.get(EnumTransactionType.BUY);
         var sells = txs.get(EnumTransactionType.SELL);
 
         BigDecimal totalProfit = gains(sells, buys);
 
-        LOGGER.info("{} gains: {}", pair, totalProfit);
+        LOGGER.info("{} gains: {}", coin, totalProfit);
 
         return totalProfit;
     }
 
-    private static BigDecimal gains(LinkedList<BinanceTx> sells, LinkedList<BinanceTx> buys) {
+    private static BigDecimal gains(LinkedList<Transaction> sells, LinkedList<Transaction> buys) {
         var profit = BigDecimal.ZERO;
 
         if (sells == null || buys == null) {
@@ -135,18 +130,20 @@ public class MainClass {
 
             if (amountSold.compareTo(amountPurchased) == 0) {
                 profit = profit.add(
-                    calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
+                    calculateSellGains(amountSold, buy,
+                        sell));
                 sells.pop();
                 buys.pop();
-            }
-            if (amountSold.compareTo(amountPurchased) < 0) {
+            } else if (amountSold.compareTo(amountPurchased) < 0) {
                 profit = profit.add(
-                    calculateSellGains(amountSold, buy.getPrice(), sell.getPrice()));
+                    calculateSellGains(amountSold, buy,
+                        sell));
                 buy.setExecuted(amountPurchased.subtract(amountSold));
                 sells.pop();
             } else {
                 profit = profit.add(
-                    calculateSellGains(amountPurchased, buy.getPrice(), sell.getPrice()));
+                    calculateSellGains(amountPurchased, buy,
+                        sell));
                 sell.setExecuted(amountSold.subtract(amountPurchased));
                 buys.pop();
             }
@@ -161,22 +158,34 @@ public class MainClass {
     }
 
     private static BigDecimal calculateSellGains(Currency amountSold,
-        BigDecimal buyPrice, BigDecimal sellPrice) {
-        var purchaseCost = amountSold.multiply(buyPrice);
-        var salesGain = amountSold.multiply(sellPrice);
+        Transaction buy, Transaction sell) {
+        // TODO: Hay que comprobar que el par de compra y venta sean del mismo tipo
+        Currency buyConverted = buy.getSpotPrice();
+        if (!buy.getSpotPrice().getCoin().contains("USD")) {
+            LOGGER.warn("Compra en moneda distinta al dolar: {}", buy.getSpotPrice().getCoin());
+            if (buy.getSpotPrice().getCoin().contains("EUR")) {
+                buyConverted = new Currency(
+                    convert("EUR", "USD", buy.getDate(), buy.getSpotPrice().getAmount()), "USD");
+            }
+        }
+        if (!sell.getSpotPrice().getCoin().contains("USD")) {
+            LOGGER.warn("Compra en moneda distinta al dolar: {}", buy.getSpotPrice().getCoin());
+        }
+        var purchaseCost = amountSold.multiply(buyConverted);
+        var salesGain = amountSold.multiply(sell.getSpotPrice());
         return salesGain.getAmount().subtract(purchaseCost.getAmount());
     }
 
     private static void printBinanceTxs() {
-        var txByTxType = binanceTxList
+        transactions
             .stream()
             .sorted()
-            .collect(groupingBy(BinanceTx::getPair));
+            .forEach(tx -> LOGGER.info("{}", tx));
 
-        txByTxType.forEach((txType, txList) -> {
-            LOGGER.info("Pair: {}", txType);
-            txList.forEach(tx -> LOGGER.info(tx.toString()));
-        });
+//        txByTxType.forEach((txType, txList) -> {
+//            LOGGER.info("Pair: {}", txType);
+//            txList.forEach(tx -> LOGGER.info(tx.toString()));
+//        });
     }
 
     private static void readBinanceBuyHistory() {
@@ -185,9 +194,10 @@ public class MainClass {
                 .stream()
                 .map(MainClass::readBinanceBuyHistoryFile)
                 .flatMap(List::stream)
+                .map(Transaction::new)
                 .toList();
 
-            binanceTxList.addAll(txs);
+            transactions.addAll(txs);
         } catch (IOException e) {
             LOGGER.error("Error reading files", e);
         }
@@ -277,9 +287,10 @@ public class MainClass {
                 .stream()
                 .map(MainClass::readBinanceCsv)
                 .flatMap(List::stream)
+                .map(Transaction::new)
                 .toList();
 
-            binanceTxList.addAll(txs);
+            transactions.addAll(txs);
         } catch (IOException e) {
             LOGGER.error(e.getMessage());
         }
@@ -301,12 +312,14 @@ public class MainClass {
 
     public static void readCoinbaseCsv() {
         try {
-            coinbaseTxList = listFilesByExt(TX_COINBASE_FOLDER, ".csv")
+            var txs = listFilesByExt(TX_COINBASE_FOLDER, ".csv")
                 .stream()
                 .map(MainClass::readCoinbaseTransactions)
                 .flatMap(List::stream)
                 .map(Transaction::new)
                 .toList();
+
+            transactions.addAll(txs);
         } catch (IOException e) {
             LOGGER.error("Error reading files", e);
         }
@@ -328,7 +341,7 @@ public class MainClass {
     }
 
     private static void getCoinbaseAirdrops(int year) {
-        var airdropTxStream = coinbaseTxList.stream()
+        var airdropTxStream = transactions.stream()
             .filter(tx -> tx.getTransactionType() == EnumTransactionType.AIRDROP
                 && tx.getDate().getYear() == year);
 
