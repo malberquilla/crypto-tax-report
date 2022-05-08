@@ -10,6 +10,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpClient.Version;
@@ -24,6 +25,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -52,14 +54,20 @@ public class MainClass {
     private static final String TX_BINANCE_BUY_FOLDER = TX_BINANCE_FOLDER + "\\Buy";
     private static final String TX_BINANCE_SPOT_FOLDER = TX_BINANCE_FOLDER + "\\Spot";
     private static final String TX_COINBASE_FOLDER = TX_ROOT_PATH + "\\Coinbase";
+    private static final String TX_CRYPTOCOM_SPOT_FOLDER = TX_ROOT_PATH + "\\cryptocom";
 
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern(
         "yyyy-MM-dd HH:mm:ss");
 
     private static final String BASE_URL = "https://api.exchangerate.host/convert?from=%s&to=%s&date=%s&amount=%s";
 
-    private static final List<Transaction> transactions = new ArrayList<>();
+    private static final LinkedList<Transaction> transactions = new LinkedList<>();
     private static final Map<String, BigDecimal> gains = new HashMap<>();
+
+    private static final Map<String, LinkedList<Transaction>> txsByCoin = new HashMap<>();
+
+    private static final Map<String, List<GainEntry>> gainsList = new HashMap<>();
+
 
     public static void main(String[] args) {
         LOGGER.info("----- Coinbase -----");
@@ -72,9 +80,103 @@ public class MainClass {
 
         readBinanceSpot();
 
-        printBinanceTxs();
+        LOGGER.info("----- Crypto.com -----");
+        //readCryptoCom();
 
-        calcGains();
+        //printBinanceTxs();
+
+        //calcGains();
+        gainsPerformance();
+
+        gainsList.forEach((coin, list) -> {
+            LOGGER.info("{}", coin);
+            list.forEach(gain -> {
+                LOGGER.info("{}", gain);
+            });
+        });
+    }
+
+    private static void readCryptoCom() {
+        try {
+            var txs = listFilesByExt(TX_CRYPTOCOM_SPOT_FOLDER, ".csv")
+                .stream()
+                .map(MainClass::readCryptoComCsv)
+                .flatMap(List::stream)
+                .map(Transaction::new)
+                .toList();
+
+            transactions.addAll(txs);
+        } catch (IOException e) {
+            LOGGER.error(e.getMessage());
+        }
+    }
+
+    private static List<CryptoComTx> readCryptoComCsv(String file) {
+        LOGGER.info("Reading file: {}", file);
+        try {
+            return new CsvToBeanBuilder<CryptoComTx>(
+                new FileReader(file))
+                .withType(CryptoComTx.class)
+                .build()
+                .parse();
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void gainsPerformance() {
+        transactions.stream()
+            .sorted(Comparator.comparing(Transaction::getDate))
+            .forEach(tx -> {
+                LOGGER.info("{}", tx);
+                var coin = tx.getExecuted().getCoin();
+                switch (tx.getTransactionType()) {
+                    case BUY, AIRDROP, STAKING:
+                        txsByCoin.computeIfAbsent(coin, k -> new LinkedList<>());
+                        txsByCoin.get(coin).add(tx);
+                        break;
+                    case SELL:
+                        if (txsByCoin.containsKey(coin)) {
+                            sell(tx, txsByCoin.get(coin));
+                        } else {
+                            LOGGER.error("No transactions for coin: {}", coin);
+                        }
+                        break;
+                    case CONVERT:
+                        convert(tx);
+                        break;
+                    default:
+                        break;
+                }
+            });
+    }
+
+    private static void convert(Transaction tx) {
+        Transaction buy = new Transaction();
+        buy.setDate(tx.getDate());
+        buy.setTransactionType(EnumTransactionType.BUY);
+        buy.setPlatform(tx.getPlatform());
+        buy.setExecuted(tx.getConverted());
+        var spotPrice = tx.getSubTotal().getAmount()
+            .divide(tx.getConverted().getAmount(), RoundingMode.HALF_UP);
+        buy.setSpotPrice(new Currency(spotPrice, tx.getSpotPrice().getCoin()));
+        buy.setSubTotal(tx.getSubTotal());
+        txsByCoin.computeIfAbsent(buy.getExecuted().getCoin(), k -> new LinkedList<>());
+        txsByCoin.get(buy.getExecuted().getCoin()).add(buy);
+
+        Transaction sell = new Transaction();
+        sell.setDate(tx.getDate());
+        sell.setTransactionType(EnumTransactionType.SELL);
+        sell.setPlatform(tx.getPlatform());
+        sell.setExecuted(tx.getExecuted());
+        sell.setSpotPrice(tx.getSpotPrice());
+        sell.setSubTotal(tx.getSubTotal());
+        sell.setFees(tx.getFees());
+        sell(sell, txsByCoin.get(sell.getExecuted().getCoin()));
+    }
+
+    private static void sell(Transaction tx, LinkedList<Transaction> transactions) {
+        gains(tx, transactions);
     }
 
     private static void calcGains() {
@@ -150,11 +252,64 @@ public class MainClass {
 
             if (profit.compareTo(BigDecimal.ZERO) > 0) {
                 profit = convert("USD", "EUR", sell.getDate(), profit);
-                profit = profit.add(gains(sells, buys));
             }
+
+            profit = profit.add(gains(sells, buys));
         }
 
         return profit;
+    }
+
+    private static void gains(Transaction sell, LinkedList<Transaction> buys) {
+        // Tenemos que añadir la venta en la lista de ganancias
+        // Por cada compra que se consuma, se añade una ganancia
+        String coin = sell.getExecuted().getCoin();
+        GainEntry gainEntry = new GainEntry();
+        gainEntry.setPurchaseDate(buys.getFirst().getDate());
+        gainEntry.setTransmissionDate(sell.getDate());
+        var purchaseValue = new Currency();
+        var transferValue = new Currency();
+        while (!buys.isEmpty() && sell.getExecuted().getAmount().compareTo(BigDecimal.ZERO) > 0) {
+            var buy = buys.element();
+            var amountPurchased = buy.getExecuted();
+            var amountSold = sell.getExecuted();
+            LOGGER.debug("Buy: {}", amountPurchased);
+            LOGGER.debug("Sell: {}", amountSold);
+
+            if (amountSold.compareTo(amountPurchased) == 0) {
+                purchaseValue.add(getTxValue(amountSold, buy));
+                transferValue.add(getTxValue(amountSold, sell));
+                buys.pop();
+            } else if (amountSold.compareTo(amountPurchased) < 0) {
+                purchaseValue.add(getTxValue(amountSold, buy));
+                transferValue.add(getTxValue(amountSold, sell));
+                buy.setExecuted(amountPurchased.subtract(amountSold));
+                sell.getExecuted().setAmount(BigDecimal.ZERO);
+            } else {
+                purchaseValue.add(getTxValue(amountPurchased, buy));
+                transferValue.add(getTxValue(amountPurchased, sell));
+                sell.setExecuted(amountSold.subtract(amountPurchased));
+                buys.pop();
+            }
+        }
+
+        gainEntry.setPurchaseValue(purchaseValue);
+        gainEntry.setTransferValue(transferValue);
+
+        gainsList.computeIfAbsent(coin, k -> new ArrayList<>()).add(gainEntry);
+    }
+
+    private static Currency getTxValue(Currency amount, Transaction tx) {
+        Currency converted = tx.getSpotPrice();
+        if (!tx.getSpotPrice().getCoin().contains("USD")) {
+            LOGGER.warn("Compra en moneda distinta al dolar: {}", tx.getSpotPrice().getCoin());
+            if (tx.getSpotPrice().getCoin().contains("EUR")) {
+                converted = new Currency(
+                    convert("EUR", "USD", tx.getDate(), tx.getSpotPrice().getAmount()), "USD");
+            }
+        }
+
+        return amount.multiply(converted);
     }
 
     private static BigDecimal calculateSellGains(Currency amountSold,

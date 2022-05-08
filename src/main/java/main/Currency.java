@@ -8,6 +8,8 @@ public class Currency implements Comparable<Currency> {
     private String coin;
 
     public Currency() {
+        amount = BigDecimal.ZERO;
+        coin = "USD";
     }
 
     public Currency(BigDecimal amount, String coin) {
@@ -52,5 +54,9 @@ public class Currency implements Comparable<Currency> {
 
     public Currency subtract(Currency substract) {
         return new Currency(this.getAmount().subtract(substract.getAmount()), this.getCoin());
+    }
+
+    public void add(Currency txValue) {
+        this.amount = this.amount.add(txValue.getAmount());
     }
 }

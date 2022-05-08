@@ -18,6 +18,9 @@ public class Transaction implements Comparable<Transaction> {
     private Currency fees;
     private Currency converted;
 
+    public Transaction() {
+    }
+
     public Transaction(BinanceTx tx) {
         this.platform = "Binance";
         this.transactionId = tx.getTransactionId();
@@ -57,6 +60,22 @@ public class Transaction implements Comparable<Transaction> {
                     matcher.group(2));
             }
         }
+    }
+
+    public Transaction(CryptoComTx tx) {
+        this.platform = "CryptoCom";
+        this.date = tx.getDate();
+        this.transactionType = tx.getTransactionType();
+        this.transactionId = tx.getTransactionHash();
+
+    }
+
+    public Currency getConverted() {
+        return converted;
+    }
+
+    public void setConverted(Currency converted) {
+        this.converted = converted;
     }
 
     public String getPlatform() {
