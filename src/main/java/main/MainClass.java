@@ -66,7 +66,7 @@ public class MainClass {
 
     private static final Map<String, LinkedList<Transaction>> txsByCoin = new HashMap<>();
 
-    private static final Map<String, List<GainEntry>> gainsList = new HashMap<>();
+    private static final Map<String, LinkedList<GainEntry>> gainsList = new HashMap<>();
 
 
     public static void main(String[] args) {
@@ -94,6 +94,36 @@ public class MainClass {
                 LOGGER.info("{}", gain);
             });
         });
+
+        // Merge gains list by coin
+        Map<String, GainEntry> mergedGains = new HashMap<>();
+        gainsList.forEach((coin, list) -> {
+            var purchaseDate = list.getFirst().getPurchaseDate();
+            var transmissionDate = list.getLast().getTransmissionDate();
+            var purchaseValue = list.stream()
+                .map(g -> g.getPurchaseValue().getAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            var transferValue = list.stream()
+                .map(g -> g.getTransferValue().getAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            var purchaseSum = new Currency(purchaseValue,
+                list.getFirst().getPurchaseValue().getCoin());
+            var transferSum = new Currency(transferValue,
+                list.getFirst().getTransferValue().getCoin());
+            mergedGains.put(coin,
+                new GainEntry(purchaseDate, transmissionDate, purchaseSum, transferSum));
+        });
+
+        mergedGains.forEach((coin, gain) -> {
+            LOGGER.info("{}: {}", coin, gain);
+        });
+
+        var totalGains = mergedGains.values().stream().map(g -> g.getGain().getAmount())
+            .mapToDouble(BigDecimal::doubleValue).sum();
+
+        LOGGER.info("Total gains: {}", totalGains);
     }
 
     private static void readCryptoCom() {
@@ -128,7 +158,6 @@ public class MainClass {
         transactions.stream()
             .sorted(Comparator.comparing(Transaction::getDate))
             .forEach(tx -> {
-                LOGGER.info("{}", tx);
                 var coin = tx.getExecuted().getCoin();
                 switch (tx.getTransactionType()) {
                     case BUY, AIRDROP, STAKING:
@@ -296,7 +325,7 @@ public class MainClass {
         gainEntry.setPurchaseValue(purchaseValue);
         gainEntry.setTransferValue(transferValue);
 
-        gainsList.computeIfAbsent(coin, k -> new ArrayList<>()).add(gainEntry);
+        gainsList.computeIfAbsent(coin, k -> new LinkedList<>()).add(gainEntry);
     }
 
     private static Currency getTxValue(Currency amount, Transaction tx) {

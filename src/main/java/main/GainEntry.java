@@ -9,6 +9,18 @@ public class GainEntry {
     private Currency transferValue;
     private Currency purchaseValue;
 
+    public GainEntry() {
+    }
+
+    public GainEntry(ZonedDateTime transmissionDate, ZonedDateTime purchaseDate,
+        Currency transferValue,
+        Currency purchaseValue) {
+        this.transmissionDate = transmissionDate;
+        this.purchaseDate = purchaseDate;
+        this.transferValue = transferValue;
+        this.purchaseValue = purchaseValue;
+    }
+
     public ZonedDateTime getTransmissionDate() {
         return transmissionDate;
     }
@@ -42,7 +54,7 @@ public class GainEntry {
     }
 
     public Currency getGain() {
-        return transferValue.subtract(purchaseValue);
+        return purchaseValue.subtract(transferValue);
     }
 
     @Override
